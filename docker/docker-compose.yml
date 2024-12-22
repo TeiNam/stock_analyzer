@@ -1,0 +1,18 @@
+services:
+  news_analyzer:
+    platform: linux/amd64
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: news_analyzer
+    volumes:
+      - ../logs:/app/logs
+    env_file:
+      - ../.env
+    restart: always
+    networks:
+      - news_network
+
+networks:
+  news_network:
+    driver: bridge
