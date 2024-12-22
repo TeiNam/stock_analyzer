@@ -17,8 +17,6 @@ config = Config.get_instance()
 class NewsAnalysisScheduler(threading.Thread):
     def __init__(self, run_immediately: bool = False):
         super().__init__()
-        self.is_running = False
-        # TIME_PERIODS에서 check_time만 가져오기
         self.schedule_times = [period['check_time'] for period in TIME_PERIODS.values()]
         self.run_immediately = run_immediately
 

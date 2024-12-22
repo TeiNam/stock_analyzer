@@ -28,12 +28,6 @@ class Config:
                 'password': os.getenv('DB_PASSWORD'),
                 'database': os.getenv('DB_NAME')
             },
-            'schedule_times': [
-                "08:30",
-                "12:30",
-                "15:00",
-                "20:30"
-            ],
             'claude': {
                 'api_key': os.getenv('CLAUDE_API_KEY'),
                 'model': "claude-3-sonnet-20240229",

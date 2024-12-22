@@ -19,12 +19,12 @@ TIME_PERIODS: Dict[str, Dict[str, Any]] = {
     "MORNING": {
         "start": "14:30",  # 전일
         "end": "08:00",
-        "check_time": "08:15"
+        "check_time": "08:10"
     },
     "AFTERNOON": {
         "start": "08:00",
         "end": "14:30",
-        "check_time": "14:45"
+        "check_time": "14:40"
     }
 }
 
@@ -39,4 +39,4 @@ LOG_BACKUP_COUNT = 30
 # API 관련 상수
 CLAUDE_MODEL = "claude-3-sonnet-20240229"
 CLAUDE_MAX_TOKENS = 4000
-MAX_NEWS_ITEMS = 20
+MAX_NEWS_ITEMS = 30

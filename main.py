@@ -1,10 +1,11 @@
 # main.py
 import time
+import logging
 from utils.config import Config
 from utils.logger import setup_logger
 from modules.news_scheduler import NewsAnalysisScheduler
+from utils.constants import TIME_PERIODS
 
-# 로깅 설정
 logger = setup_logger(__name__)
 config = Config.get_instance()
 
@@ -12,9 +13,11 @@ config = Config.get_instance()
 def main():
     try:
         logger.info("뉴스 분석 서비스 시작")
+        next_times = [period['check_time'] for period in TIME_PERIODS.values()]
+        logger.info(f"다음 실행 예정 시간: {', '.join(next_times)}")
 
-        # 스케줄러 시작 (초기 실행 옵션 True)
-        scheduler = NewsAnalysisScheduler(run_immediately=True)
+        # 스케줄러 시작 (초기 실행 없이)
+        scheduler = NewsAnalysisScheduler(run_immediately=False)
 
         try:
             scheduler.start()

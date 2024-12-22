@@ -2,6 +2,8 @@
 from anthropic import Anthropic
 from typing import List, Dict
 import json
+import re
+import time
 from utils.config import Config
 from utils.logger import setup_logger
 from utils.constants import CLAUDE_MODEL, CLAUDE_MAX_TOKENS, MAX_NEWS_ITEMS
@@ -84,7 +86,7 @@ class ClaudeClient:
       4. 개별 기업의 경우, 시가총액이 크거나 산업 영향력이 큰 기업 위주로 선정
       5. 주요 기업들의 소식 (애플, 아마존, 엔비디아, SK하이닉스, openai의 소식)
       6. 미국 증시, 뉴욕 증시, 나스닥, S&P 소식 반드시 포함
-      7. 요약 결과가 무조건 최소 20개의 기사를 보장     
+      7. 비트코인에 대한 소식 제외     
 
       중복되는 내용의 기사들은 가장 핵심적인 제목 하나만 선택하되, 
       중복 기사가 많은 이슈일수록 더 높은 중요도 점수(1-10)를 부여해주세요.
@@ -116,6 +118,7 @@ class ClaudeClient:
       """
 
         try:
+            start_time = time.time()
             response = self.client.messages.create(
                 model=self.model,
                 max_tokens=self.max_tokens,
@@ -124,52 +127,84 @@ class ClaudeClient:
                     "content": prompt
                 }]
             )
+            end_time = time.time()
 
-            content = response.content[0].text
-            logger.debug(f"Claude API Response: {content}")
+            # API 사용량 로깅
+            usage_info = {
+                'input_tokens': response.usage.input_tokens,
+                'output_tokens': response.usage.output_tokens,
+                'total_tokens': response.usage.input_tokens + response.usage.output_tokens,
+                'api_time': round(end_time - start_time, 2)
+            }
 
+            logger.info(f"API 사용량: {usage_info['total_tokens']} tokens "
+                        f"(입력: {usage_info['input_tokens']}, "
+                        f"출력: {usage_info['output_tokens']})")
+            logger.info(f"API 호출 시간: {usage_info['api_time']}초")
+
+            content = response.content[0].text.strip()
+
+            # JSON 부분만 추출
             try:
-                analyzed_news = json.loads(content)
-                if isinstance(analyzed_news, list):
-                    result_news = []
-                    used_ids = set()
+                # JSON 시작과 끝 위치 찾기
+                json_start = content.find('[')
+                json_end = content.rfind(']') + 1
 
-                    for item in analyzed_news:
-                        news_id = str(item.get('news_id'))
-                        if news_id and news_id not in used_ids:
-                            original_news = news_map.get(news_id)
-                            if original_news:
-                                used_ids.add(news_id)
-                                # 원본 정보로 업데이트
-                                item.update({
-                                    'link': original_news['link'],
-                                    'section': original_news['section'],
-                                    'news_id': original_news['news_id'],
-                                    'pub_time': original_news['pub_time'],
-                                    'title': original_news['title']
-                                })
-                                result_news.append(item)
+                if json_start != -1 and json_end != -1:
+                    json_content = content[json_start:json_end]
+
+                    # JSON 문자열 정리
+                    json_content = re.sub(r'\s+', ' ', json_content)  # 여러 줄 공백을 한 줄로
+                    json_content = json_content.replace('…', '...')  # 특수 문자 처리
+                    json_content = json_content.replace('···', '...')  # 특수 문자 처리
+
+                    logger.debug(f"Cleaned JSON content: {json_content}")
+
+                    analyzed_news = json.loads(json_content)
+
+                    if isinstance(analyzed_news, list):
+                        result_news = []
+                        used_ids = set()
+
+                        for item in analyzed_news:
+                            news_id = str(item.get('news_id'))
+                            if news_id and news_id not in used_ids:
+                                original_news = news_map.get(news_id)
+                                if original_news:
+                                    used_ids.add(news_id)
+                                    item.update({
+                                        'link': original_news['link'],
+                                        'section': original_news['section'],
+                                        'news_id': original_news['news_id'],
+                                        'pub_time': original_news['pub_time'],
+                                        'title': original_news['title']
+                                    })
+                                    result_news.append(item)
+                                    logger.info(f"뉴스 매칭 성공: {item['title']}")
+                                else:
+                                    logger.warning(f"존재하지 않는 news_id: {news_id}")
                             else:
-                                logger.warning(f"존재하지 않는 news_id: {news_id}")
+                                logger.info(f"중복된 news_id 제외 또는 누락: {news_id}")
+
+                        if not result_news:
+                            logger.error("매칭된 뉴스가 없습니다.")
                         else:
-                            logger.info(f"중복된 news_id 제외 또는 누락: {news_id}")
+                            logger.info(f"총 {len(result_news)}개의 뉴스가 선택되었습니다.")
 
-                    if not result_news:
-                        logger.error("매칭된 뉴스가 없습니다.")
-
-                    return result_news
-
+                        return result_news
+                    else:
+                        logger.error("응답이 리스트 형식이 아닙니다.")
+                        return []
                 else:
-                    logger.error(f"Invalid response format. Expected list but got: {type(analyzed_news)}")
+                    logger.error("JSON 형식의 응답을 찾을 수 없습니다.")
                     return []
 
             except json.JSONDecodeError as e:
-                logger.error(f"JSON 파싱 오류: {e}\nResponse content: {content}")
-                return []
-            except Exception as e:
-                logger.error(f"Claude API 호출 중 오류 발생: {str(e)}")
+                logger.error(f"JSON 파싱 오류: {str(e)}")
+                logger.error(f"문제의 위치: 라인 {e.lineno}, 컬럼 {e.colno}")
+                logger.error(f"문제의 문자: {e.doc[max(0, e.pos - 50):e.pos + 50]}")
                 return []
 
         except Exception as e:
-            logger.error(f"Claude API 호출 중 오류 발생: {str(e)}")
+            logger.error(f"API 호출 중 오류 발생: {str(e)}")
             return []
