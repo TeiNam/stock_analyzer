@@ -137,10 +137,16 @@ class ClaudeClient:
                 'api_time': round(end_time - start_time, 2)
             }
 
+            # Claude 3 Sonnet 비용 계산 (2024년 기준)
+            # Input: $0.003/1K tokens, Output: $0.015/1K tokens
+            cost = (usage_info['input_tokens'] * 0.003 / 1000) + (usage_info['output_tokens'] * 0.015 / 1000)
+            usage_info['cost_usd'] = round(cost, 4)
+
             logger.info(f"API 사용량: {usage_info['total_tokens']} tokens "
                         f"(입력: {usage_info['input_tokens']}, "
                         f"출력: {usage_info['output_tokens']})")
             logger.info(f"API 호출 시간: {usage_info['api_time']}초")
+            logger.info(f"API 사용 비용: ${usage_info['cost_usd']}")
 
             content = response.content[0].text.strip()
 
