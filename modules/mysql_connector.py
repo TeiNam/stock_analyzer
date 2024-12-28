@@ -5,14 +5,16 @@ from typing import Optional
 import time
 from utils.config import Config
 from utils.logger import setup_logger
-from utils.constants import DB_CONFIG_KEYS
 
 logger = setup_logger(__name__)
 config = Config.get_instance()
 
 class MySQLConnector:
+    # DB 설정 키 목록
+    DB_CONFIG_KEYS = ['host', 'port', 'user', 'password', 'database']
+
     def __init__(self):
-        self.config = {key: config.get(f'db.{key}') for key in DB_CONFIG_KEYS}
+        self.config = {key: config.get(f'db.{key}') for key in self.DB_CONFIG_KEYS}
         self._connection = None
         self.max_retries = config.get('retry.max_retries', 3)
         self.retry_delay = config.get('retry.retry_delay', 5)

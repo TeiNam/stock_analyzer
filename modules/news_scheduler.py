@@ -7,18 +7,21 @@ from modules.mysql_connector import MySQLConnector
 from modules.news_analyzer import NewsAnalyzer
 from modules.slack_sender import SlackSender
 from modules.data_loader import NewsDataLoader
-from utils.config import Config
+from utils.config import Config, KST
 from utils.logger import setup_logger
-from utils.constants import TIME_PERIODS, KST
 
 logger = setup_logger(__name__)
 config = Config.get_instance()
 
 class NewsAnalysisScheduler(threading.Thread):
-    def __init__(self, run_immediately: bool = False):
+    # 스케줄러 기본 설정값
+    DEFAULT_SCHEDULE_TIMES = ["00:10", "06:10", "09:10", "12:10", "15:10", "18:10", "21:10"]
+
+    def __init__(self, run_immediately: bool = False, schedule_times: list = None):
         super().__init__()
-        self.schedule_times = [period['check_time'] for period in TIME_PERIODS.values()]
         self.run_immediately = run_immediately
+        self.is_running = False
+        self.schedule_times = schedule_times or self.DEFAULT_SCHEDULE_TIMES
 
         # DB 커넥터 및 데이터 로더 초기화
         self.db_connector = MySQLConnector()

@@ -32,9 +32,9 @@ class NewsAnalyzer:
             logger.info(f"뉴스 {len(news_data['news_list'])}건에 대해 분석을 시작합니다.")
 
             # Claude를 통한 뉴스 분석
-            analyzed_news = self.claude_client.analyze_news(news_data['news_list'])
+            analyzed_result = self.claude_client.analyze_news(news_data['news_list'])
 
-            if not analyzed_news:
+            if not analyzed_result or not analyzed_result['news_items']:
                 logger.warning("분석된 뉴스가 없습니다")
                 return None
 
@@ -42,8 +42,10 @@ class NewsAnalyzer:
                 'date': news_data['date'],
                 'period': news_data['period'],
                 'total_count': news_data['total_count'],
-                'selected_count': len(analyzed_news),
-                'news_items': analyzed_news
+                'selected_count': len(analyzed_result['news_items']),
+                'news_items': analyzed_result['news_items'],
+                'market_analysis': analyzed_result.get('market_analysis', []),
+                'usage_info': analyzed_result.get('usage_info', {})
             }
 
             logger.info(f"뉴스 분석 완료: 전체 {result['total_count']}건 중 {result['selected_count']}건 선택")

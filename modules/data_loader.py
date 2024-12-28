@@ -1,78 +1,69 @@
 # modules/data_loader.py
-import logging
 from typing import Dict, Optional, Any
-from datetime import datetime, timedelta
+from datetime import datetime
 import pytz
 from modules.mysql_connector import MySQLConnector
 from utils.config import Config
 from utils.logger import setup_logger
-from utils.constants import TIME_PERIODS
 
 logger = setup_logger(__name__)
 config = Config.get_instance()
 
 
 class NewsDataLoader:
+    # 스케줄러 실행 시간별 수집 시간 범위 정의
+    ANALYSIS_PERIODS = {
+        "00:10": {"start": "00:00", "end": "00:10"},
+        "06:10": {"start": "06:00", "end": "06:10"},
+        "09:10": {"start": "09:00", "end": "09:10"},
+        "12:10": {"start": "12:00", "end": "12:10"},
+        "15:10": {"start": "15:00", "end": "15:10"},
+        "18:10": {"start": "18:00", "end": "18:10"},
+        "21:10": {"start": "21:00", "end": "21:10"}
+    }
+
     def __init__(self, mysql_connector: MySQLConnector):
         self.mysql_connector = mysql_connector
         self.kst = pytz.timezone('Asia/Seoul')
 
     def get_news_by_period(self, current_time: datetime) -> Optional[Dict[str, Any]]:
-        target_time = current_time.time()  # datetime.time 객체
+        target_time = current_time.time()
         target_date = current_time.date()
 
-        # 현재 실행 시간에 맞는 기간 찾기
+        # 현재 시간과 가장 가까운 분석 시간 찾기
+        current_minutes = target_time.hour * 60 + target_time.minute
         selected_period = None
-        for period_name, period_info in TIME_PERIODS.items():
-            check_time = datetime.strptime(period_info['check_time'], "%H:%M").time()
 
-            # 현재 시간과 체크 시간의 차이를 분으로 계산
-            current_minutes = target_time.hour * 60 + target_time.minute
+        for analysis_time, period in self.ANALYSIS_PERIODS.items():
+            check_time = datetime.strptime(analysis_time, "%H:%M").time()
             check_minutes = check_time.hour * 60 + check_time.minute
             time_diff = abs(current_minutes - check_minutes)
 
             if time_diff <= 5:  # 5분 이내
-                selected_period = (period_name, period_info)
+                selected_period = (analysis_time, period)
                 break
 
         if not selected_period:
-            logger.info("현재 시각은 뉴스 수집 시간이 아닙니다.")
+            logger.info("현재 시각은 뉴스 분석 시간이 아닙니다.")
             return None
 
-        period_name, period_info = selected_period
-        start_time = period_info['start']
-        end_time = period_info['end']
+        analysis_time, period = selected_period
 
-        if period_name == "MORNING":
-            # 전날 14:30 ~ 오늘 08:00
-            query = """
-            SELECT news_id, title, section, link, pub_time
-            FROM news
-            WHERE (pub_date = %s AND pub_time >= %s)
-               OR (pub_date = %s AND pub_time <= %s)
-            ORDER BY pub_date, pub_time
-            """
-            prev_date = target_date - timedelta(days=1)
-            params = (
-                prev_date.strftime('%Y-%m-%d'), start_time,
-                target_date.strftime('%Y-%m-%d'), end_time
-            )
-            period_str = f"{prev_date.strftime('%Y-%m-%d')} {start_time} ~ {target_date.strftime('%Y-%m-%d')} {end_time}"
-        else:
-            # 08:00 ~ 14:30
-            query = """
-            SELECT news_id, title, section, link, pub_time
-            FROM news
-            WHERE pub_date = %s 
-              AND pub_time BETWEEN %s AND %s
-            ORDER BY pub_time
-            """
-            params = (
-                target_date.strftime('%Y-%m-%d'),
-                start_time,
-                end_time
-            )
-            period_str = f"{target_date.strftime('%Y-%m-%d')} {start_time} ~ {end_time}"
+        # 해당 수집 시간대의 데이터 조회
+        query = """
+        SELECT news_id, title, section, link, pub_time, create_at
+        FROM news
+        WHERE DATE(create_at) = %s 
+        AND TIME(create_at) BETWEEN %s AND %s
+        ORDER BY create_at
+        """
+
+        params = (
+            target_date.strftime('%Y-%m-%d'),
+            period['start'],
+            period['end']
+        )
+        period_str = f"{target_date.strftime('%Y-%m-%d')} {period['start']} ~ {period['end']}"
 
         logger.info(f"뉴스 조회 시작: {period_str}")
         results = self.mysql_connector.execute_query(query, params)
