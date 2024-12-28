@@ -40,8 +40,9 @@ DB_PASSWORD=your_db_password
 DB_NAME=your_db_name
 CLAUDE_API_KEY=your_claude_api_key
 SLACK_WEBHOOK_URL=your_slack_webhook_url
-MAX_RETRIES=3
-RETRY_DELAY=5
+CLAUDE_MODEL=claude-3-sonnet-20240229
+CLAUDE_MAX_TOKENS=4000
+MAX_NEWS_ITEMS=15
 ```
 
 ## 실행 방법
