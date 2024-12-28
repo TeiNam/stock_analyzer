@@ -24,76 +24,47 @@ class ClaudeClient:
         self.input_token_cost = config.get('claude.input_token_cost', 0.003)
         self.output_token_cost = config.get('claude.output_token_cost', 0.015)
 
-    def clean_and_parse_json(self, content: str) -> Dict:
-        """Claude 응답에서 JSON을 추출하고 파싱"""
-        try:
-            # 로깅 추가: 전체 응답 내용
-            logger.debug(f"Claude 응답 전체 내용: {content}")
+    # modules/claude_client.py의 clean_and_parse_json 메소드 수정
 
-            # 전체 응답에서 JSON 부분 추출
+    def clean_and_parse_json(self, content: str) -> Dict:
+        try:
             json_start = content.find('{')
             json_end = content.rfind('}') + 1
-
-            if json_start == -1 or json_end == -1:
-                logger.error("JSON 형식의 응답을 찾을 수 없습니다.")
-                return None
-
-            # JSON 문자열 정리
             json_content = content[json_start:json_end]
 
-            # 로깅 추가: 추출된 JSON
-            logger.debug(f"추출된 JSON 문자열: {json_content}")
+            # 제목에 포함된 따옴표 이스케이프 처리
+            def escape_quotes_in_title(match):
+                title = match.group(1)
+                # 제목 내의 따옴표를 이스케이프
+                escaped_title = title.replace('"', '\\"')
+                return f'"title": "{escaped_title}"'
 
-            # 불필요한 공백, 줄바꿈 정리
+            # "title": "..." 패턴에서 따옴표 처리
+            json_content = re.sub(r'"title":\s*"([^"]*(?:"[^"]*)*)"', escape_quotes_in_title, json_content)
+
+            # 기본 정리
             json_content = re.sub(r'\s+', ' ', json_content)
-
-            # 특수 문자 처리
             json_content = json_content.replace('…', '...')
             json_content = json_content.replace('···', '...')
-            json_content = json_content.replace('\\"', '"')  # 이중 이스케이프 처리
+            json_content = json_content.replace('&amp;', '&')
 
-            # 따옴표 수정
-            json_content = json_content.replace('"', '"').replace('"', '"')
-
-            # 로깅 추가: 정리된 JSON
-            logger.debug(f"정리된 JSON 문자열: {json_content}")
-
-            # JSON 파싱 시도
             try:
                 return json.loads(json_content)
             except json.JSONDecodeError as e:
-                logger.error(f"첫 번째 JSON 파싱 시도 실패: {str(e)}")
-                logger.debug(f"파싱 실패 위치 주변: {json_content[max(0, e.pos - 50):min(len(json_content), e.pos + 50)]}")
+                logger.error(f"JSON 파싱 오류: {str(e)}")
+                logger.error(f"오류 위치: 라인 {e.lineno}, 컬럼 {e.colno}")
+                problem_area = e.doc[max(0, e.pos - 30):min(len(e.doc), e.pos + 30)]
+                logger.error(f"문제의 문자: {problem_area}")
 
-                # 백업 방법: 각 필드를 개별적으로 추출
+                # 백업 방법: 더 강력한 따옴표 처리
+                json_content = re.sub(r'(?<="title":\s*")(.*?)(?="(?:\s*,|\s*}))',
+                                      lambda m: m.group(1).replace('"', '\\"'),
+                                      json_content)
+
                 try:
-                    # JSON 구조를 재구성
-                    news_list_match = re.search(r'"news_list"\s*:\s*(\[.*?\])\s*,\s*"market_analysis"', json_content,
-                                                re.DOTALL)
-                    market_analysis_match = re.search(r'"market_analysis"\s*:\s*(\[.*?\])', json_content, re.DOTALL)
-
-                    if news_list_match and market_analysis_match:
-                        news_list_str = news_list_match.group(1)
-                        market_analysis_str = market_analysis_match.group(1)
-
-                        # 로깅 추가
-                        logger.debug(f"추출된 news_list: {news_list_str}")
-                        logger.debug(f"추출된 market_analysis: {market_analysis_str}")
-
-                        news_list = json.loads(news_list_str)
-                        market_analysis = json.loads(market_analysis_str)
-
-                        return {
-                            "news_list": news_list,
-                            "market_analysis": market_analysis
-                        }
-                    else:
-                        logger.error("필요한 JSON 구조를 찾을 수 없습니다.")
-                        return None
-
+                    return json.loads(json_content)
                 except json.JSONDecodeError as e2:
-                    logger.error(f"백업 JSON 파싱 시도 실패: {str(e2)}")
-                    logger.debug(f"백업 파싱 실패 위치: {str(e2.pos)}")
+                    logger.error(f"백업 JSON 파싱 오류: {str(e2)}")
                     return None
 
         except Exception as e:
