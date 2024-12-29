@@ -8,7 +8,7 @@
 
 **News 수집기는 다른 레포를 참고**
 
-[뉴스수집기 Reo Link](https://github.com/TeiNam/news_collector)
+[뉴스수집기 Repo Link](https://github.com/TeiNam/news_collector)
 
 
 ### 1. 자동 뉴스 수집 및 분석
