@@ -13,13 +13,10 @@ config = Config.get_instance()
 class NewsDataLoader:
     # 스케줄러 실행 시간별 수집 시간 범위 정의
     ANALYSIS_PERIODS = {
-        "00:10": {"start": "00:00", "end": "00:10"},
-        "06:10": {"start": "06:00", "end": "06:10"},
-        "09:10": {"start": "09:00", "end": "09:10"},
-        "12:10": {"start": "12:00", "end": "12:10"},
-        "15:10": {"start": "15:00", "end": "15:10"},
-        "18:10": {"start": "18:00", "end": "18:10"},
-        "21:10": {"start": "21:00", "end": "21:10"}
+        "09:10": {"start": "21:00", "end": "09:00"},  # 전일 21:00 - 당일 09:00
+        "12:10": {"start": "09:00", "end": "12:00"},  # 당일 09:00 - 12:00
+        "15:10": {"start": "12:00", "end": "15:00"},  # 당일 12:00 - 15:00
+        "21:10": {"start": "15:00", "end": "21:00"}  # 당일 15:00 - 21:00
     }
 
     def __init__(self, mysql_connector: MySQLConnector):
@@ -49,23 +46,41 @@ class NewsDataLoader:
 
         analysis_time, period = selected_period
 
-        # 해당 수집 시간대의 데이터 조회
-        query = """
-        SELECT news_id, title, section, link, pub_time, create_at
-        FROM news
-        WHERE DATE(create_at) = %s 
-        AND TIME(create_at) BETWEEN %s AND %s
-        ORDER BY create_at
-        """
+        # 첫 번째 시간대(09:10)의 경우 전날 데이터도 포함
+        if analysis_time == "09:10":
+            query = """
+            SELECT news_id, title, section, link, pub_time, create_at
+            FROM news
+            WHERE (
+                (DATE(create_at) = DATE_SUB(%s, INTERVAL 1 DAY) AND TIME(create_at) >= %s)
+                OR (DATE(create_at) = %s AND TIME(create_at) <= %s)
+            )
+            ORDER BY create_at
+            """
+            params = (
+                target_date.strftime('%Y-%m-%d'),
+                period['start'],
+                target_date.strftime('%Y-%m-%d'),
+                period['end']
+            )
+        else:
+            # 일반적인 경우
+            query = """
+            SELECT news_id, title, section, link, pub_time, create_at
+            FROM news
+            WHERE DATE(create_at) = %s 
+            AND TIME(create_at) BETWEEN %s AND %s
+            ORDER BY create_at
+            """
+            params = (
+                target_date.strftime('%Y-%m-%d'),
+                period['start'],
+                period['end']
+            )
 
-        params = (
-            target_date.strftime('%Y-%m-%d'),
-            period['start'],
-            period['end']
-        )
         period_str = f"{target_date.strftime('%Y-%m-%d')} {period['start']} ~ {period['end']}"
-
         logger.info(f"뉴스 조회 시작: {period_str}")
+
         results = self.mysql_connector.execute_query(query, params)
 
         if not results:

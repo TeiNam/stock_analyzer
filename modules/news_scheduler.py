@@ -13,9 +13,10 @@ from utils.logger import setup_logger
 logger = setup_logger(__name__)
 config = Config.get_instance()
 
+
 class NewsAnalysisScheduler(threading.Thread):
     # 스케줄러 기본 설정값
-    DEFAULT_SCHEDULE_TIMES = ["00:10", "06:10", "09:10", "12:10", "15:10", "18:10", "21:10"]
+    DEFAULT_SCHEDULE_TIMES = ["09:10", "12:10", "15:10", "21:10"]
 
     def __init__(self, run_immediately: bool = False, schedule_times: list = None):
         super().__init__()
