@@ -13,10 +13,8 @@ config = Config.get_instance()
 class NewsDataLoader:
     # 스케줄러 실행 시간별 수집 시간 범위 정의
     ANALYSIS_PERIODS = {
-        "09:10": {"start": "21:00", "end": "09:00"},  # 전일 21:00 - 당일 09:00
-        "12:10": {"start": "09:00", "end": "12:00"},  # 당일 09:00 - 12:00
-        "15:10": {"start": "12:00", "end": "15:00"},  # 당일 12:00 - 15:00
-        "21:10": {"start": "15:00", "end": "21:00"}  # 당일 15:00 - 21:00
+        "08:40": {"start": "15:00", "end": "08:30"},  # 전일 21:00 - 당일 09:00
+        "15:10": {"start": "08:30", "end": "15:00"},  # 당일 12:00 - 15:00
     }
 
     def __init__(self, mysql_connector: MySQLConnector):
@@ -47,7 +45,7 @@ class NewsDataLoader:
         analysis_time, period = selected_period
 
         # 첫 번째 시간대(09:10)의 경우 전날 데이터도 포함
-        if analysis_time == "09:10":
+        if analysis_time == "08:40":
             query = """
             SELECT news_id, title, section, link, pub_time, create_at
             FROM news

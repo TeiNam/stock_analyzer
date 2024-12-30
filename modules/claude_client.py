@@ -1,6 +1,6 @@
 # modules/claude_client.py
 from anthropic import Anthropic
-from typing import List, Dict
+from typing import List, Dict, Optional
 import json
 import re
 import time
@@ -18,111 +18,175 @@ class ClaudeClient:
         self.model = config.get('claude.model')
         self.max_tokens = config.get('claude.max_tokens')
         self.max_news_items = config.get('claude.max_news_items')
-        self.similarity_threshold = config.get('news.similarity_threshold', 65)  # 유사도 임계값
+        self.similarity_threshold = config.get('news.similarity_threshold', 65)
 
         # 토큰당 비용 설정
         self.input_token_cost = config.get('claude.input_token_cost', 0.003)
         self.output_token_cost = config.get('claude.output_token_cost', 0.015)
 
-    # modules/claude_client.py의 clean_and_parse_json 메소드 수정
+        # 뉴스 카테고리 키워드 정의
+        self.keywords = {
+            '시장_전반': ['금리', '환율', '증시', '코스피', '나스닥', 'ETF', '주가', '지수', '시장', '달러'],
+            '기업_산업': ['실적', '투자', '계약', 'M&A', '기업', '매출', '영업이익', '사업', '합병', '인수'],
+            '제도_정책': ['규제', '정책', '제도', '금융위', '감독', '개정', '법안', '법률', '시행']
+        }
 
-    def clean_and_parse_json(self, content: str) -> Dict:
+    def determine_category(self, title: str) -> str:
+        """뉴스 제목을 기반으로 카테고리 판별"""
+        title = title.lower()
+        for category, keywords in self.keywords.items():
+            if any(keyword in title for keyword in keywords):
+                return category
+        return '기타'
+
+    def cluster_news(self, news_list: List[Dict]) -> Dict[str, List[Dict]]:
+        """뉴스를 카테고리별로 클러스터링"""
+        clustered = {
+            '시장_전반': [],
+            '기업_산업': [],
+            '제도_정책': [],
+            '기타': []
+        }
+
+        # 첫 번째 패스: 카테고리별 분류
+        for news in news_list:
+            category = self.determine_category(news['title'])
+            news['category'] = category
+            clustered[category].append(news)
+
+        # 두 번째 패스: 각 카테고리 내에서 유사도 기반 클러스터링
+        for category in clustered.keys():
+            cluster_groups = []
+            used_indices = set()
+
+            for i, news in enumerate(clustered[category]):
+                if i in used_indices:
+                    continue
+
+                current_cluster = [news]
+                for j, other_news in enumerate(clustered[category][i + 1:], start=i + 1):
+                    if j in used_indices:
+                        continue
+
+                    ratio = fuzz.token_set_ratio(news['title'], other_news['title'])
+                    if ratio >= self.similarity_threshold:
+                        current_cluster.append(other_news)
+                        used_indices.add(j)
+
+                if current_cluster:
+                    # 클러스터의 대표 뉴스 선정 (가장 긴 제목을 가진 뉴스)
+                    representative = max(current_cluster, key=lambda x: len(x['title']))
+                    representative['related_count'] = len(current_cluster) - 1
+                    cluster_groups.append(representative)
+
+            clustered[category] = cluster_groups
+
+        return clustered
+
+    def select_news(self, clustered_news: Dict[str, List[Dict]], min_counts: Dict[str, int]) -> List[Dict]:
+        """카테고리별 최소 요구사항을 충족하도록 뉴스 선별"""
+        selected = []
+
+        # Config에서 설정된 최대 뉴스 개수 사용
+        max_items = self.max_news_items
+        min_items = 10  # 최소 요구사항
+
+        if max_items < min_items:
+            logger.warning(f"설정된 max_news_items({max_items})가 최소 요구사항({min_items})보다 작습니다. {min_items}로 조정됩니다.")
+            max_items = min_items
+
+        # 1단계: 각 카테고리별 최소 요구사항 충족
+        for category, required in min_counts.items():
+            news_pool = clustered_news.get(category, [])
+            if not news_pool:
+                continue
+
+            # 관련 기사 수와 제목 길이로 정렬
+            sorted_news = sorted(
+                news_pool,
+                key=lambda x: (x.get('related_count', 0), len(x['title'])),
+                reverse=True
+            )
+
+            # 최소 요구사항만큼 선택
+            selected.extend(sorted_news[:required])
+
+        # 2단계: 남은 슬롯 채우기 (max_items 제한)
+        remaining_slots = max_items - len(selected)
+        if remaining_slots > 0:
+            remaining_pool = []
+            for category, news_list in clustered_news.items():
+                remaining_pool.extend([n for n in news_list if n not in selected])
+
+            # 남은 뉴스들 중에서 중요도순으로 정렬
+            additional_news = sorted(
+                remaining_pool,
+                key=lambda x: (x.get('related_count', 0), len(x['title'])),
+                reverse=True
+            )[:remaining_slots]
+
+            selected.extend(additional_news)
+
+        logger.info(f"뉴스 선별 완료: 총 {len(selected)}개 (max_items: {max_items})")
+        return selected
+
+    def validate_selection(self, selected_news: List[Dict]) -> bool:
+        """선별된 뉴스가 요구사항을 충족하는지 검증"""
+        if len(selected_news) < 10:
+            return False
+
+        categories = {
+            '시장_전반': 0,
+            '기업_산업': 0,
+            '제도_정책': 0
+        }
+
+        for news in selected_news:
+            category = news.get('category', self.determine_category(news['title']))
+            if category in categories:
+                categories[category] += 1
+
+        # 카테고리별 최소 요구사항 검증
+        return all([
+            categories['시장_전반'] >= 4,
+            categories['기업_산업'] >= 3,
+            categories['제도_정책'] >= 3
+        ])
+
+    def clean_and_parse_json(self, content: str) -> Optional[Dict]:
+        """Claude 응답의 JSON 파싱 및 정제"""
         try:
             json_start = content.find('{')
             json_end = content.rfind('}') + 1
             json_content = content[json_start:json_end]
 
-            # 제목에 포함된 따옴표 이스케이프 처리
             def escape_quotes_in_title(match):
                 title = match.group(1)
-                # 제목 내의 따옴표를 이스케이프
                 escaped_title = title.replace('"', '\\"')
                 return f'"title": "{escaped_title}"'
 
-            # "title": "..." 패턴에서 따옴표 처리
             json_content = re.sub(r'"title":\s*"([^"]*(?:"[^"]*)*)"', escape_quotes_in_title, json_content)
-
-            # 기본 정리
             json_content = re.sub(r'\s+', ' ', json_content)
             json_content = json_content.replace('…', '...')
             json_content = json_content.replace('···', '...')
             json_content = json_content.replace('&amp;', '&')
 
-            try:
-                return json.loads(json_content)
-            except json.JSONDecodeError as e:
-                logger.error(f"JSON 파싱 오류: {str(e)}")
-                logger.error(f"오류 위치: 라인 {e.lineno}, 컬럼 {e.colno}")
-                problem_area = e.doc[max(0, e.pos - 30):min(len(e.doc), e.pos + 30)]
-                logger.error(f"문제의 문자: {problem_area}")
-
-                # 백업 방법: 더 강력한 따옴표 처리
-                json_content = re.sub(r'(?<="title":\s*")(.*?)(?="(?:\s*,|\s*}))',
-                                      lambda m: m.group(1).replace('"', '\\"'),
-                                      json_content)
-
-                try:
-                    return json.loads(json_content)
-                except json.JSONDecodeError as e2:
-                    logger.error(f"백업 JSON 파싱 오류: {str(e2)}")
-                    return None
+            return json.loads(json_content)
 
         except Exception as e:
-            logger.error(f"JSON 처리 중 예외 발생: {str(e)}")
+            logger.error(f"JSON 파싱 오류: {str(e)}")
             return None
 
-    def analyze_news(self, news_list: List[Dict]) -> Dict:
-        """
-        1) 뉴스 리스트를 유사 기사 클러스터링
-        2) 대표 기사만 Claude에 전달
-        3) Claude 응답을 parsing
-        """
-        # 유사 기사 클러스터링
-        clustered = []
-        used_indices = set()
-
-        for i, news_item in enumerate(news_list):
-            if i in used_indices:
-                continue
-
-            cluster = [news_item]
-            for j, other_item in enumerate(news_list[i + 1:], start=i + 1):
-                if j in used_indices:
-                    continue
-                ratio = fuzz.token_set_ratio(news_item['title'], other_item['title'])
-                if ratio >= self.similarity_threshold:
-                    cluster.append(other_item)
-                    used_indices.add(j)
-            clustered.append(cluster)
-
-        # 대표 기사 목록 생성
-        summarized_list = []
-        for cluster in clustered:
-            representative = cluster[0]
-            representative['related_count'] = len(cluster) - 1
-            summarized_list.append(representative)
-
-        news_map = {str(news['news_id']): news for news in summarized_list}
-
+    def analyze_with_claude(self, selected_news: List[Dict]) -> Dict:
+        """선별된 뉴스에 대한 Claude의 시장 영향도 분석"""
         titles_text = "\n".join([
-            f"- {item['news_id']}|||{item['title']}"
-            for item in summarized_list
+            f"- {news['news_id']}|||{news['title']}"
+            for news in selected_news
         ])
 
-        prompt = f"""다음은 오늘의 뉴스 제목 목록입니다. 두 파트로 나누어 분석해주세요.
+        prompt = f"""다음은 선별된 주요 뉴스 목록입니다. 시장 영향도를 분석해주세요.
 
-        [파트 1] 주요 뉴스 선별
-        주식 투자자의 관점에서 가장 중요한 뉴스 {self.max_news_items}개를 선별해주세요.
-        다음 기준으로 뉴스를 평가해주세요:
-        1. 시장 전반에 영향을 미치는 거시경제 뉴스 (금리, 환율, 정책 등)를 최우선으로 고려
-        2. 주요 기업이나 산업 전반에 영향을 미치는 뉴스를 그 다음으로 고려
-        3. 비슷한 내용을 다루는 기사가 많을수록 해당 이슈의 중요도가 높다고 판단
-        4. 개별 기업의 경우, 시가총액이 크거나 산업 영향력이 큰 기업 위주로 선정
-        5. 주요 기업들의 소식 (애플, 아마존, 엔비디아, SK하이닉스, openai, 브로드컴, MS, SK텔레콤의 소식)
-        6. 미국 증시, 뉴욕 증시, 나스닥, S&P 소식 반드시 포함
-        7. 비트코인에 대한 소식 제외     
-
-        [파트 2] 시장 영향도 분석
+        [시장 영향도 분석]
         선별된 뉴스들을 종합적으로 분석하여 3-5개의 주요 시장 영향 포인트를 도출해주세요.
         각 포인트별로 다음 내용을 포함해주세요:
         - 주제 (예: 환율 리스크, 반도체 업황 등)
@@ -137,15 +201,6 @@ class ClaudeClient:
 
         JSON 형식으로 다음과 같이 응답해주세요:
         {{
-            "news_list": [
-                {{
-                    "news_id": "뉴스 ID (|||앞의 숫자)",
-                    "title": "뉴스 제목 (|||뒤의 제목)",
-                    "importance": 중요도(1-10),
-                    "reason": "선정 이유",
-                    "related_count": 유사한 기사 수
-                }}
-            ],
             "market_analysis": [
                 {{
                     "topic": "분석 주제",
@@ -163,29 +218,23 @@ class ClaudeClient:
             response = self.client.messages.create(
                 model=self.model,
                 max_tokens=self.max_tokens,
-                messages=[{
-                    "role": "user",
-                    "content": prompt
-                }]
+                messages=[{"role": "user", "content": prompt}]
             )
             end_time = time.time()
 
-            # API 사용량 로깅
             usage_info = {
                 'input_tokens': response.usage.input_tokens,
                 'output_tokens': response.usage.output_tokens,
                 'total_tokens': response.usage.input_tokens + response.usage.output_tokens,
                 'api_time': round(end_time - start_time, 2)
             }
+            usage_info['cost_usd'] = round(
+                (usage_info['input_tokens'] * self.input_token_cost +
+                 usage_info['output_tokens'] * self.output_token_cost) / 1000,
+                4
+            )
 
-            # Claude 비용 계산
-            cost = (usage_info['input_tokens'] * self.input_token_cost / 1000) + \
-                   (usage_info['output_tokens'] * self.output_token_cost / 1000)
-            usage_info['cost_usd'] = round(cost, 4)
-
-            logger.info(f"API 사용량: {usage_info['total_tokens']} tokens "
-                        f"(입력: {usage_info['input_tokens']}, "
-                        f"출력: {usage_info['output_tokens']})")
+            logger.info(f"API 사용량: {usage_info['total_tokens']} tokens")
             logger.info(f"API 호출 시간: {usage_info['api_time']}초")
             logger.info(f"API 사용 비용: ${usage_info['cost_usd']}")
 
@@ -193,52 +242,56 @@ class ClaudeClient:
             parsed_response = self.clean_and_parse_json(content)
 
             if not parsed_response:
-                logger.error("JSON 응답 처리 실패")
-                return {
-                    'news_items': [],
-                    'market_analysis': [],
-                    'usage_info': usage_info
-                }
-
-            # 뉴스 항목 처리
-            result_news = []
-            used_ids = set()
-
-            for item in parsed_response.get('news_list', []):
-                news_id = str(item.get('news_id'))
-                if news_id and news_id not in used_ids:
-                    original_news = news_map.get(news_id)
-                    if original_news:
-                        used_ids.add(news_id)
-                        item.update({
-                            'link': original_news['link'],
-                            'section': original_news['section'],
-                            'news_id': original_news['news_id'],
-                            'pub_time': original_news['pub_time'],
-                            'title': original_news['title']
-                        })
-                        result_news.append(item)
-                        logger.info(f"뉴스 매칭 성공: {item['title']}")
-                    else:
-                        logger.warning(f"존재하지 않는 news_id: {news_id}")
-                else:
-                    logger.info(f"중복된 news_id 제외 또는 누락: {news_id}")
-
-            if not result_news:
-                logger.error("매칭된 뉴스가 없습니다.")
-            else:
-                logger.info(f"총 {len(result_news)}개의 뉴스가 선택되었습니다.")
+                return {'market_analysis': [], 'usage_info': usage_info}
 
             return {
-                'news_items': result_news,
                 'market_analysis': parsed_response.get('market_analysis', []),
                 'usage_info': usage_info
             }
 
         except Exception as e:
-            logger.error(f"API 호출 중 오류 발생: {str(e)}")
+            logger.error(f"Claude API 호출 중 오류 발생: {str(e)}")
+            return {'market_analysis': [], 'usage_info': {}}
+
+    def analyze_news(self, news_list: List[Dict]) -> Dict:
+        """메인 분석 프로세스"""
+        try:
+            # 1. 뉴스 클러스터링
+            clustered = self.cluster_news(news_list)
+            logger.info(f"카테고리별 클러스터링 완료: {{k: len(v) for k, v in clustered.items()}}")
+
+            # 2. 카테고리별 최소 요구사항 설정
+            min_counts = {
+                '시장_전반': 4,
+                '기업_산업': 3,
+                '제도_정책': 3
+            }
+
+            # 3. 뉴스 선별
+            selected = self.select_news(clustered, min_counts)
+            logger.info(f"1차 선별 완료: {len(selected)}개 뉴스")
+
+            # 4. 선별 결과 검증
+            if not self.validate_selection(selected):
+                logger.warning("선별된 뉴스가 요구사항을 충족하지 못함")
+                # 검증 실패시 카테고리 요구사항을 조정하여 재시도
+                min_counts = {k: max(v - 1, 2) for k, v in min_counts.items()}
+                selected = self.select_news(clustered, min_counts)
+
+            # 5. Claude API 호출 및 분석
+            analysis_result = self.analyze_with_claude(selected)
+
+            logger.info(f"뉴스 분석 완료: {len(selected)}개 선별")
+            return {
+                'news_items': selected,
+                'market_analysis': analysis_result.get('market_analysis', []),
+                'usage_info': analysis_result.get('usage_info', {})
+            }
+
+        except Exception as e:
+            logger.error(f"뉴스 분석 중 오류 발생: {str(e)}")
             return {
                 'news_items': [],
                 'market_analysis': [],
-                'usage_info': usage_info
+                'usage_info': {}
             }

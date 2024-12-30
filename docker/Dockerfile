@@ -11,7 +11,12 @@ WORKDIR /app
 # 필요한 패키지 설치
 RUN apt-get update && apt-get install -y \
     gcc \
+    tzdata \
     && rm -rf /var/lib/apt/lists/*
+
+# 타임존 설정
+ENV TZ=Asia/Seoul
+RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
 
 # 파일 복사
 COPY requirements.txt .

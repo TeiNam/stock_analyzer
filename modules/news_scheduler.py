@@ -16,7 +16,7 @@ config = Config.get_instance()
 
 class NewsAnalysisScheduler(threading.Thread):
     # 스케줄러 기본 설정값
-    DEFAULT_SCHEDULE_TIMES = ["09:10", "12:10", "15:10", "21:10"]
+    DEFAULT_SCHEDULE_TIMES = ["08:40", "12:10", "15:10", "21:10"]
 
     def __init__(self, run_immediately: bool = False, schedule_times: list = None):
         super().__init__()

@@ -15,12 +15,12 @@ class Config:
         'api_key': None,  # 환경변수로 설정 필요
         'model': "claude-3-sonnet-20240229",
         'max_tokens': 4000,
-        'max_news_items': 10
+        'max_news_items': 20
     }
 
     # 뉴스 분석 관련 설정
     NEWS_DEFAULTS = {
-        'similarity_threshold': 50  # 기사 유사도 임계값
+        'similarity_threshold': 70  # 기사 유사도 임계값
     }
 
     # 로깅 설정
